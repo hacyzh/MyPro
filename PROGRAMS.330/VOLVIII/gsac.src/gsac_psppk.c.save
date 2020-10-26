@@ -1,0 +1,1236 @@
+/* Changes
+	29 JUL 2015 - created this to permit interactive picks of amplitude spectra
+		only the L command is implemented
+*/
+#include	<stdio.h>
+#include        "gsac.h"
+
+#include        "gsac_plot.h"
+#include        "gsac_sac.h"
+#include        "gsac_arg.h"
+#include	"csstim.h"
+#include	<libgen.h>
+
+extern struct sacfile_ *sacdata;
+extern int  sfgetline(FILE *fp, char s[], int lim);
+
+static float *y = (float *)NULL;
+extern int *sortptr;
+
+
+#define PSPPK_AM 0
+#define PSPPK_PH 1
+#define PSPPK_OVERLAY 2
+#define PSPPK_PERPLOT 3
+#define PSPPK_XLOG 4
+#define PSPPK_XLIN 5
+#define PSPPK_YLOG 6
+#define PSPPK_YLIN 7
+#define PSPPK_FMIN 8
+#define PSPPK_FMAX 9
+#define PSPPK_DEFAULT 10
+#define PSPPK_AMIN 11
+#define PSPPK_AMAX 12
+
+#define PLOT_AM 0
+#define PLOT_PH 1
+
+static int psppk_doamph = PLOT_AM;
+
+struct arghdr psppkarg[] = {
+	{PSPPK_AM, "AMPLITUDE"	, IHDR, 0, 0, NO, "AMPLITUDE ",3},
+	{PSPPK_AM, "AM"	, IHDR, 0, 0, NO, "AMPLITUDE ",-1},
+	{PSPPK_PH, "PHASE"	, IHDR, 0, 0, NO, "PHASE", 2},
+	{PSPPK_OVERLAY, "OVERLAY" , YHDR, 0, 1, NO, "OVERLAY [ON|OFF] ", 1},
+	{PSPPK_PERPLOT, "PERPLOT" , NHDR, 0, 1, NO, "PERLOT [n|OFF]", 2},
+	{PSPPK_XLIN, "XLIN", IHDR, 0, 0, NO, "XLIN", 3},
+	{PSPPK_XLOG, "XLOG", IHDR, 0, 0, NO, "XLOG", 3},
+	{PSPPK_YLIN, "YLIN", IHDR, 0, 0, NO, "YLIN", 3},
+	{PSPPK_YLOG, "YLOG", IHDR, 0, 0, NO, "YLOG", 3},
+	{PSPPK_FMIN, "FMIN", RHDR, 0, 1, NO, "FMIN", 3},
+	{PSPPK_FMAX, "FMAX", RHDR, 0, 1, NO, "FMAX", 3},
+	{PSPPK_AMIN, "AMIN", RHDR, 0, 1, NO, "AMIN", 3},
+	{PSPPK_AMAX, "AMAX", RHDR, 0, 1, NO, "AMAX", 3},
+	{PSPPK_DEFAULT, "DEFAULT", RHDR, 0, 0, NO, "DEFAULT", 1},
+	{0,	""		, IHDR, 0, 0, NO, "",-1}
+};
+
+static int psppkperplot = -1;
+static int psppk_overlay = NO;
+static int psppk_yn;
+static int psppk_num;
+static int psppk_ylin = NO;
+static int psppk_xlin = NO;
+static float psppk_fmin = -1;
+static float psppk_fmax = 1.0e+38;
+static float psppk_amin = 0.0;
+static float psppk_amax = 1.0e+38;
+static int psppkabsolute = YES;
+
+/* commands for interactive picking */
+#define NEXT 0
+#define QUIT 1
+#define CONT 2
+#define PREVIOUS 3
+extern struct plt_ctl *pmap ;
+
+void gsac_set_param_psppk(int ncmd, char **cmdstr);
+void gsac_exec_psppk(void);
+int gsac_show_intsppk(float x0, float y0, float xlen, float ylen, int ns, int ne, float ts, float te, float dy, int ntrc, double fwin,int numperframe, float yh, float yl, float depmin, float depmax);
+int sppk_parse_key(float x0, float y0, float xlen, float ylen, int ns, int ne, float ts, float te, float dy, int ntrc, double fwin,int numperframe, float yh, float yl, float cx,float cy,int switchchar,int *lpos, float depmin, float depmax);
+void gsac_show_sppk(float x0, float y0, float xlen, float ylen, int ns, int ne, float tb, float te, float dy, int ntrc, double fwin,int numperframe, int pabsolute_in, float *uy, float *ly, int setup, int ylimctrl, float ylimlow, float ylimhigh, int overlay);
+void showdec(float xl, float yl, float xh, float yh, int inc);
+
+extern int *sortptr;
+
+extern void XviG_Flush();
+char timstr[32] ;
+extern int title_on ;
+extern int title_size ;
+extern int title_location;
+extern char title_text[] ;
+
+float tit_siz;
+
+
+static char *title[] = {
+        "Frequency (Hz)" , "Time (s)"
+        } ;
+extern void dogrid(void);
+
+char ostr1[80];
+char ostr2[80];
+
+extern void gsac_plot_fileid(float x0,float y0,float xlen,float ylen, int k);
+extern void gsac_exec_hold(void);
+
+extern void gsac_psppk(float x0,float y0,float xlen,float ylen,float fe,float fs,int ns,int ne,int ntrc, float depmax, float depmin, int numpsppkframe, float dy, int psppk_doamph, int psppk_overlay, int psppk_xlin, int psppk_ylin, float psppk_amin, float psppk_amax, float *uy, float *ly);
+extern int inside(float cx, float cy, float xl, float yl, float xh, float yh);
+extern void clearregion(float xl, float yl, float xh, float yh);
+
+extern void traceinfo(float cx,float cy,float x0,float y0, float dy, float xlen,float ylen,int ns, int ne, int ntrc, int *k, float *ux, float *uy , int numperframe);
+
+void getfreq(float uv, int k, int ns, int ne, int numpsppkframe, int *lpos, float x0);
+
+#define TITLE_LOC_TOP    0
+#define TITLE_LOC_BOTTOM 1
+#define TITLE_LOC_LEFT   2
+#define TITLE_LOC_RIGHT  3
+
+#define TITLE_SIZE_TINY   0
+#define TITLE_SIZE_SMALL  1
+#define TITLE_SIZE_MEDIUM 2
+#define TITLE_SIZE_LARGE  3
+
+extern int title_on ;
+extern int title_size ;
+extern int title_location;
+extern char title_text[] ;
+
+float tit_siz;
+
+/* these are temporary variables only used here */
+float psppk_real[10];
+
+/* these are prototypes for global variables to be used by the routine */
+
+void gsac_set_param_psppk(int ncmd, char **cmdstr)
+{
+	/* the only parameter to be set is MORE 
+	 *
+	 */
+	int i;
+	int HasMouse;
+	float XminDev, YminDev,
+	        XmaxDev, YmaxDev, XminClip,
+	        YminClip, XmaxClip, YmaxClip;
+	int Color;
+
+	float tmpmx, tmpmn;
+
+	/* initialize graphics */
+	if(gsac_control.plotinit == NO){
+		if(gsac_control.plotdevice==WIN){
+			ginitf("INTEM","GSAC");
+			printf("Initializing Interactive Graphics\n");
+			gmesg("Initializing Interactive Graphics");
+			gsac_control.everinteractive = YES;
+			gsac_control.plotinit = YES;
+			gsac_control.plotchange = NO;
+
+			ginfo(&HasMouse, &XminDev, &YminDev, 
+				&XmaxDev, &YmaxDev, &XminClip, 
+				&YminClip, &XmaxClip, &YmaxClip,&Color);
+			if(Color >= 4)
+				gsac_control.black = 0;
+			else
+				gsac_control.black = 1;
+			gsac_control.kolor = Color%4;
+		}
+		gsac_control.plotinit = YES;
+		gsac_control.plotchange = NO;
+	} else {
+		gframe(2);
+		if(gsac_control.plotchange == YES){
+			if(gsac_control.plotdevice==WIN){
+				ginitf("INTEM","GSAC");
+				gmesg("Initializing Interactive Graphics");
+				gsac_control.everinteractive = YES;
+				ginfo(&HasMouse, &XminDev, &YminDev, 
+					&XmaxDev, &YmaxDev, &XminClip, 
+					&YminClip, &XmaxClip, &YmaxClip,&Color);
+				gsac_control.XmaxDev = XmaxDev;
+				gsac_control.YmaxDev = YmaxDev;
+				if(Color >= 4)
+					gsac_control.black = 0;
+				else
+					gsac_control.black = 1;
+				gsac_control.kolor = Color%4;
+			}
+
+
+		}
+	}
+	if(ncmd == 1)
+		return;
+	if(testarg(ncmd, cmdstr, psppkarg, YES, YES))
+	       	return	;
+	/* now determine which was set */
+	for(i=0 ; psppkarg[i].key[0] != '\0' ; i++){
+		if(psppkarg[i].used > 0){	
+			if(psppkarg[i].ricell == YHDR){
+				getargyn(ncmd, cmdstr, psppkarg[i].key, 
+					psppkarg[i].mfit,psppkarg[i].narg, &psppk_yn );
+			} else if(psppkarg[i].ricell == NHDR){
+				getargn(ncmd, cmdstr, psppkarg[i].key, 
+					psppkarg[i].mfit,psppkarg[i].narg, &psppk_num );
+			} else if(psppkarg[i].ricell == RHDR){
+				getargr(ncmd, cmdstr, psppkarg[i].key, 
+					psppkarg[i].mfit,psppkarg[i].narg, psppk_real );
+			}
+			psppkarg[i].used = 0;
+			switch(psppkarg[i].id){
+				case PSPPK_PERPLOT:
+					psppkperplot = psppk_num;
+					break;
+				case PSPPK_AM:
+					psppk_doamph = PLOT_AM;
+					break;
+				case PSPPK_PH:
+					psppk_doamph = PLOT_PH;
+					break;
+				case PSPPK_OVERLAY:
+					if(psppk_yn == NO)
+						psppk_overlay = NO;
+					else if(psppk_yn == YES)
+						psppk_overlay = YES;
+					break;
+				case PSPPK_XLOG:
+					psppk_xlin = NO;
+					break;
+				case PSPPK_XLIN:
+					psppk_xlin = YES;
+					break;
+				case PSPPK_YLOG:
+					psppk_ylin = NO;
+					break;
+				case PSPPK_YLIN:
+					psppk_ylin = YES;
+					break;
+				case PSPPK_FMIN:
+					psppk_fmin = psppk_real[0];;
+					break;
+				case PSPPK_FMAX:
+					psppk_fmax = psppk_real[0];;
+					break;
+				case PSPPK_AMIN:
+					psppk_amin = psppk_real[0];;
+					break;
+				case PSPPK_AMAX:
+					psppk_amax = psppk_real[0];;
+					break;
+				case PSPPK_DEFAULT:
+					psppkperplot = -1;
+					psppk_overlay = NO;
+					psppk_ylin = NO;
+					psppk_xlin = NO;
+					psppk_fmin = -1;
+					psppk_fmax = 1.0e+38;
+					psppk_amin = 0.0;
+					psppk_amax = 1.0e+38;
+					break;
+			}
+		}
+	}
+	/* safety check on fmax */
+	tmpmx = MAX(psppk_fmax, psppk_fmin);
+	tmpmn = MIN(psppk_fmax, psppk_fmin);
+	psppk_fmax =tmpmx;
+	psppk_fmin =tmpmn;
+	tmpmx = MAX(psppk_amax, psppk_amin);
+	tmpmn = MIN(psppk_amax, psppk_amin);
+	psppk_amax =tmpmx;
+	psppk_amin =tmpmn;
+
+}
+
+void gsac_exec_psppk(void)
+{
+int i,j,k,kkk;
+int ntrc;
+float x0, y0, xlen, ylen, dy;
+float depmax, depmin;
+char pltname[10];
+char instr[100];
+int numpsppkframe;
+int n2;
+float temp;
+float fs, fe;
+float tr, ti;
+int iret;
+
+        double ts, te;
+        double fwin;
+
+        float uy, ly;
+
+
+	/* if there are no traces return */
+	ntrc = gsac_control.number_otraces;
+	gsac_exec_hold();
+	if(ntrc < 1)
+		return;
+
+	if(gsac_control.fft == NO){
+		printf("Execute FFT first before plot\n");
+		return;
+	}
+	/* initialize */
+	/* must have interactive graphics */
+	if(gsac_control.plotdevice!=WIN){
+		printf("PLOTSPPK requires interactive graphics\n");
+		return;
+	}
+	if(gsac_control.plotdevice==WIN){
+		if(gsac_control.hold == NO){
+			gframe(2);
+		} else if(gsac_control.hold == 1){
+			gframe(2);
+			gsac_control.hold++ ;
+		}
+	}
+	if(pmap == (struct plt_ctl *)NULL)
+		pmap = (struct plt_ctl *)calloc(ntrc, sizeof(struct plt_ctl));
+	else
+		pmap = (struct plt_ctl *) realloc(pmap,ntrc*sizeof(struct plt_ctl));
+	gsac_control.uxmul = 1.0;
+	gsac_control.uxcen = 0.5;
+
+	if(psppkperplot > 0)
+		if(psppkperplot > ntrc)
+			numpsppkframe = ntrc;
+		else
+			numpsppkframe = psppkperplot;
+	else
+		numpsppkframe = ntrc;
+
+	xlen = gsac_control.xlen ;
+	ylen = gsac_control.ylen ;
+	x0   = gsac_control.x0 ;
+	y0   = gsac_control.y0 ;
+
+	if(psppk_overlay == YES){
+		dy = ylen;
+	} else {
+		dy = ylen / numpsppkframe;
+	}
+
+	/* temporary */
+	/* since all are plotted to the same frequency scale we must
+	 * define the lower and upper limits. As a kludge, the minimum
+	 * frequency plotted with log x-axis is the DF of first trace 
+	 * in memory */
+	/* get global fmax */
+	fe = MIN(gsac_control.fmax, psppk_fmax);
+	if(psppk_xlin == YES){
+		fs = MAX (psppk_fmin, 0.0);
+	} else {
+		fs = MAX (psppk_fmin, sacdata[0].df);
+	}
+
+
+	/* get extreme amplitudes for the case of an overlay */
+	if(psppk_overlay == YES ){
+		/* never overlay phase spectra */
+		if(psppk_doamph == PLOT_AM){
+			depmax = 0.0;
+			for ( kkk=0 ; kkk < ntrc ; kkk++){
+				k = sortptr[kkk];
+				n2 = sacdata[k].npow2/2.0  ;
+				for(i=0 , j= 0; i <= n2 ; i++){
+					tr = sacdata[k].sac_spectra[j++];
+					ti = sacdata[k].sac_spectra[j++];
+					temp = sqrt(tr*tr + ti*ti);
+					if(temp > depmax)
+						depmax = temp;
+				}
+			}
+			/* adjust amplitude for AMIN AMAX */
+			if(psppk_ylin == YES){
+				depmax = MIN(depmax * 1.2, psppk_amax);
+				depmin = psppk_amin ;
+			} else {
+				if(psppk_amax < 1.0e+37)
+					depmax = psppk_amax;
+				else
+					depmax *= 1.5;
+				if(psppk_amin > 0.0)
+					depmin = psppk_amin;
+				else
+					depmin = depmax/10000.0 ;
+			}
+		}
+	}
+
+        iret = NEXT;
+	for ( kkk=0 ; kkk < ntrc && iret == NEXT ; kkk+=numpsppkframe){
+		/* put up the traces */
+		gsac_control.uxmul = 1.0;
+		gsac_control.uxcen = 0.5;
+		gframe(2);
+
+		gsac_psppk(x0,y0,xlen,ylen,fe,fs,kkk,MIN(kkk+numpsppkframe,ntrc),
+				ntrc,depmax,depmin,numpsppkframe, dy, 
+				psppk_doamph,  psppk_overlay,  psppk_xlin,  psppk_ylin,  psppk_amin,  psppk_amax, &uy, &ly);
+		/* do the interactive picking */
+                fwin = fe - fs;
+		iret = gsac_show_intsppk(x0, y0, xlen, ylen, kkk, 
+				MIN(kkk+numpsppkframe,ntrc), fs, fe, dy, ntrc, 
+				fwin, numpsppkframe,uy,ly,depmin,depmax);
+		/* special case to handle previous */
+		if(iret == PREVIOUS){
+			kkk = MAX(-numpsppkframe, kkk-numpsppkframe-numpsppkframe);
+			iret = NEXT ;
+		}
+	}	
+	/* clean up */
+	gclip("off", x0, y0, x0+xlen, y0+dy);
+	gcursor("Arrow");
+}
+
+int gsac_show_intsppk(float x0, float y0, float xlen, float ylen, int ns, int ne, float fs, float fe, float dy, int ntrc, double fwin,int numperframe, float yh, float yl, float depmin, float depmax)
+{
+float cx, cy;
+char ch[2];
+int switchchar;
+int doloop;
+int iret;
+int lpos;
+
+	/* work interactively with the current traces */
+	/* set clip region to the actual plot region not the entire box */
+	/* cross hair cursors within the trace plot region , default
+	 * 	arrow outside this region */
+	gcursor("Cross");
+	gclip("on", x0, yl , x0+xlen, yh);
+	doloop = YES;
+	/* infinite loop */
+	ch[1] = '\0';
+	lpos = 0;
+	while(doloop){
+		gsac_control.ylim_rsc = YES;
+		curaxy(&cx,&cy,ch);
+	/* we must decide if the cursor was in the button region
+	 * or if the cursor was in the trace region */
+		switchchar = ch[0];
+		switchchar = toupper(switchchar);
+		if(inside(cx,cy,x0,y0,x0+xlen,y0+ylen)){
+			iret = sppk_parse_key(x0, y0, xlen, ylen, ns, ne, 
+				fs, fe, dy, ntrc, fwin,numperframe, yh, yl,
+				cx,cy,switchchar,&lpos, depmin, depmax);
+			if(iret == NEXT)
+				return (NEXT);
+			else if(iret == PREVIOUS)
+				return (PREVIOUS);
+			else if(iret == QUIT)
+				return (QUIT);
+		}
+	}
+	gsac_control.ylim_rsc = NO;
+	return(CONT);
+}
+
+int sppk_parse_key(float x0, float y0, float xlen, float ylen, int ns, int ne, float fs, float fe, float dy, int ntrc, double fwin,int numpsppkframe, float yh, float yl, float cx,float cy,int switchchar,int *lpos, float depmin, float depmax) 
+{
+/* remember that switchchar is upper case from the line before the call */
+int k, kk;
+char ch[2];
+float ux, uy;
+float uv;
+double ttime;
+float amp;
+float cx_X, twin_X;	/* for use with the X X to define window */
+	traceinfo(cx,cy,x0,y0,dy,xlen,ylen,ns,ne,ntrc,&k,&ux,&uy ,numpsppkframe);
+	cx_X = -1;
+	if(k >= 0)
+	switch(switchchar){
+		case '-':
+		case '_':
+			/* compress frequency scale */
+/*
+			gsac_control.uxcen += (ux - 0.5)/gsac_control.uxmul;
+			gsac_control.uxmul /= 2.0 ;
+			gsac_control.uxmul = MAX(1.0, gsac_control.uxmul/2.0);
+			if(gsac_control.uxmul == 1.0)
+				gsac_control.uxcen = 0.5;
+			*lpos = 0;
+			gclip("off", x0, y0, x0+xlen, y0+ylen);
+			clearregion(0.0,1.0,10.0,8.0);
+		gsac_psppk(x0,y0,xlen,ylen,fe,fs,ns,ne,
+				ntrc,depmax,depmin,numpsppkframe, dy, 
+				psppk_doamph,  psppk_overlay,  psppk_xlin,  psppk_ylin,  psppk_amin,  psppk_amax, &yh, &yl);
+			gclip("on", x0, yl , x0+xlen, yh);
+*/
+			break;
+		case '+':
+		case '=':
+			/* expand frequency scale */
+/*
+			gsac_control.uxcen += (ux - 0.5)/gsac_control.uxmul;
+			gsac_control.uxmul *= 2.0 ;
+			*lpos = 0;
+			gclip("off", x0, y0, x0+xlen, y0+ylen);
+			clearregion(0.0,1.0,10.0,8.0);
+		gsac_psppk(x0,y0,xlen,ylen,fe,fs,ns,ne,
+				ntrc,depmax,depmin,numpsppkframe, dy, 
+				psppk_doamph,  psppk_overlay,  psppk_xlin,  psppk_ylin,  psppk_amin,  psppk_amax, &yh, &yl);
+			gclip("on", x0, yl , x0+xlen, yh);
+*/
+			break;
+		case ' ':
+			/* center cursor point */
+/*
+			gsac_control.uxcen += (ux - 0.5)/gsac_control.uxmul;
+			*lpos = 0;
+			gclip("off", x0, y0, x0+xlen, y0+ylen);
+			clearregion(0.0,1.0,10.0,8.0);
+		gsac_psppk(x0,y0,xlen,ylen,fe,fs,ns,ne,
+				ntrc,depmax,depmin,numpsppkframe, dy, 
+				psppk_doamph,  psppk_overlay,  psppk_xlin,  psppk_ylin,  psppk_amin,  psppk_amax, &yh, &yl);
+			gclip("on", x0, yl , x0+xlen, yh);
+*/
+			break;
+			break;
+		case 'B': /* display previous page  */
+			  return PREVIOUS;
+			  break;
+		case 'L':        /* give cursor location and amplitude
+		 			note use a small unclip window */
+			     uv = gsac_control.uxcen + (ux - 0.5)/gsac_control.uxmul;
+			gclip("off", x0, y0, x0+xlen, y0+ylen);
+			  getfreq(uv,k,ns,ne,numpsppkframe,lpos,x0);
+			gclip("on", x0, yl , x0+xlen, yh);
+			  break;
+		case 'N':  /* next plot of PERPLOT is set  */
+			  return NEXT;
+			  break;
+		case 'O': /* previous plot window  */
+			  /* this requires a history of windows
+			   * and a replot which requires turning of
+			   * clipping while a redraw is done */
+			*lpos = 0;
+			  gsac_control.uxmul = 1.0;
+			  gsac_control.uxcen = 0.5;
+			gclip("off", x0, y0, x0+xlen, y0+ylen);
+			clearregion(0.0,1.0,10.0,8.0);
+		gsac_psppk(x0,y0,xlen,ylen,fe,fs,ns,ne,
+				ntrc,depmax,depmin,numpsppkframe, dy, 
+				psppk_doamph,  psppk_overlay,  psppk_xlin,  psppk_ylin,  psppk_amin,  psppk_amax, &yh, &yl);
+			gclip("on", x0, yl , x0+xlen, yh);
+			break;
+		case 'Q': /* end interactive  */
+
+			return QUIT;
+		case 'X': 
+			cx_X = gsac_control.uxcen + (ux - 0.5)/gsac_control.uxmul;
+			/* now invoke the cursor again and only use
+			      * of we see a second X */
+			curaxy(&cx,&cy,ch);
+			switchchar = ch[0];
+			switchchar = toupper(switchchar);
+			if(inside(cx,cy,x0,y0,x0+xlen,y0+ylen)){
+				traceinfo(cx,cy,x0,y0,dy,xlen,ylen,ns,ne,
+					ntrc,&k,&ux,&uy ,numpsppkframe);
+			if(switchchar == 'X'){
+				uv = gsac_control.uxcen + (ux - 0.5)/gsac_control.uxmul;
+				/* re map */
+				gsac_control.uxcen = (uv + cx_X)/2.0;
+				/* redisplay */
+				twin_X=ABS(uv - cx_X)*fwin;
+				gsac_control.uxmul = ABS(fwin/twin_X);
+				*lpos = 0;
+				gclip("off", x0, y0, x0+xlen, y0+ylen);
+				clearregion(0.0,1.0,10.0,8.0);
+				gsac_show_sppk(x0,y0,xlen,ylen,ns,ne,fs,fe,
+					dy,ntrc, fwin, numpsppkframe, psppkabsolute,
+					&yh,&yl,NO, YLIM_OFF, -1, +1, NO);
+				gclip("on", x0, yl , x0+xlen, yh);
+			}
+			}
+			  break; /* invoke twice to define new window */
+	}
+	return (-1);
+}
+
+void gsac_show_sppk(float x0, float y0, float xlen, float ylen, int ns, int ne, float tb, float te, float dy, int ntrc, double twin,int numperframe, int pabsolute_in, float *uy, float *ly, int setup, int ylimctrl, float ylimlow, float ylimhigh, int overlay)
+{
+	int i,k, kkk, kk,inc;
+	float yy0, yyy0;
+	double dx;
+	double xx;
+	float  yy;
+	double txx;
+	float tdepmax, tdepmin;
+	float ht;
+	int npts;
+	float delta, depmax, depmin;
+	float u;
+	double twinl, twinh;
+	double twinll, twinhh;
+	int nwind;			/* number of data points in  window */
+
+	float floor;			/* lower bound for log y plot */
+	float ceiling;
+
+	float uxcen, uxmul;
+	int mqdp;
+	int ilow, ihgh;			/* rough indices of visible plot 
+						added 14 JAN 2005 for 
+						faster/smaller plot*/
+	int isxtime;			/* is the axis time or frequency */
+	int pabsolute;			/* local version - overrides user
+					default if trace is IXY == freq */
+
+	uxcen = gsac_control.uxcen;
+	uxmul = gsac_control.uxmul;
+	/* beginning of trace plot */
+
+	*ly =  1.0e+38;
+	*uy = -1.0e+38;
+
+	ht = 0.10;
+
+/* safety */
+	if(twin <= 0.0) twin = 1.0;
+	
+	if(gsac_control.grid)
+		dogrid();
+
+	newpen(1);
+	gclip("off", x0, y0, x0+xlen, y0+dy);
+/*
+	gbox(x0, y0, x0+xlen, y0+ylen);
+*/
+
+	/* do the bottom axis */
+	/* put trace plot separate after the setup  to use the
+	 * struct parameters */
+	/* for absolute plot put in the B b +TWIN e.g, */
+	twinl = twin*(uxcen - 0.5/uxmul);
+	twinh = twin*(uxcen + 0.5/uxmul);
+	/* first trace defines Time or Frequency
+		XLOG is permitted only for IXY 
+		also IXY implies pabsolute, no markt, eventually reduced ppk */
+	if(sacdata[0].sachdr.ihdr[15] == 1){
+		isxtime = YES ;
+		pabsolute = pabsolute_in ;
+	} else {
+		isxtime = NO ;
+		pabsolute = YES ;
+	}
+	/* last trace define the scale */
+
+	/* YLIM - if ylimctrl == YLIM_ALL then we must search through all
+	 * traces to find the extreme limits to get largest depmax and least
+	 * depmin . Recall that
+	 * YLIM_OFF means automatic control
+	 * YLIM_ALL means all traces have same scaling
+	 * YLIM_USR means that user has specified the scaling limits to be
+	 * applied to all traces
+	 * THESE VALUES ARE FIXED
+	 * */
+	if(ylimctrl == YLIM_ALL){
+		depmax = -1.0e+37;
+		depmin =  1.0e+37;
+		for ( kkk=ns ; kkk < ne ; kkk++){
+			k = sortptr[kkk];
+			depmin = MIN(sacdata[k].sachdr.rhdr[H_DEPMIN],depmin);
+ 			depmax = MAX(sacdata[k].sachdr.rhdr[H_DEPMAX],depmax);
+		}
+	} else if (ylimctrl == YLIM_USR){
+			depmin = MIN(ylimlow, ylimhigh);
+			depmax = MAX(ylimlow, ylimhigh);
+	}
+	/* set the background */
+	if(gsac_control.background == YES &&
+		gsac_control.background_color >= 0){
+		newpen(gsac_control.background_color);
+		if(overlay == YES){
+		shader(x0,y0,x0+xlen,y0+ylen,0,0,0.01,0.01);
+		} else {
+		shader(x0,y0+ylen-(ne-ns)*dy,x0+xlen,y0+ylen,0,0,0.01,0.01);
+		}
+		newpen(1);
+	}
+	/* NOW PROCESS TRACES */
+	for ( kkk=ns ; kkk < ne ; kkk++){
+		k = sortptr[kkk];
+		npts = sacdata[k].sachdr.ihdr[H_NPTS];
+		delta  = sacdata[k].sachdr.rhdr[H_DELTA];
+		tb = sacdata[k].sachdr.rhdr[H_B];
+		te = sacdata[k].sachdr.rhdr[H_E];
+		dx = xlen*delta/twin;
+		/* safety for single pooint series */
+		if(dx == 0.0) dx = 1.0 ;
+
+
+		/* use depmax depmin */
+		kk = kkk%numperframe;
+		if(overlay == YES){
+			yy0 = y0 ;
+			yyy0 = yy0 - kk*1.5*ht ;
+		} else {
+			yy0 = y0 + (numperframe -1  - kk )*dy;
+			yyy0 = yy0  ;
+		}
+
+		nwind = 1 + (twinh - twinl)/delta;
+		if(gsac_control.plotdevice==WIN){
+			if(gsac_control.qdp < 0)
+				inc = 1;
+			else if(gsac_control.qdp > 0)
+				inc = gsac_control.qdp;
+			else {
+				/* automatic determination */
+				mqdp = MIN(gsac_control.XmaxDev,gsac_control.YmaxDev);
+				inc = MAX(1, npts/mqdp);
+			}
+		} else {
+			/* never do a QDP for an CALPLOT external plot */
+			inc = 1;
+		}
+
+		/* adjust the decimation */
+		if(nwind <= 4000)
+			inc = 1;
+
+		pmap[kk].abstime = pabsolute;
+		pmap[kk].xl = x0;
+		pmap[kk].xh = x0 +xlen;;
+		pmap[kk].yl = yy0;
+		pmap[kk].yh = yy0 +dy;
+		pmap[kk].k  = k;
+		pmap[kk].n  = kk;
+		pmap[kk].tfirst = sacdata[k].tzbegx;
+		pmap[kk].tlast  = sacdata[k].tzendx;
+		pmap[kk].ifirst = 0;
+		pmap[kk].ilast  = npts -1;
+		pmap[kk].npts  = npts;
+		pmap[kk].xlen = xlen;
+		pmap[kk].delta = delta;
+		/* not used but also float = double */
+		pmap[kk].ymult = 1.0;
+		if(setup == YES){
+			if(ylimctrl == YLIM_OFF){
+				/* define the depmax depmin to use if
+				 * not already defined by YLIM_ALL or 
+				 * YLIM_USR */
+				depmin = sacdata[k].sachdr.rhdr[H_DEPMIN];
+				depmax = sacdata[k].sachdr.rhdr[H_DEPMAX];
+				depmax += 0.05*fabs(depmax);
+				depmin -= 0.05*fabs(depmin);
+				pmap[kk].depmax = depmax;
+				pmap[kk].depmin = depmin;
+				/* to implement the automatic trace scaling
+				 * for the current window, we modify the
+				 * pmap[kk].uymul; Note that since this is 
+				 * based on depmax, depmin, uymul >= 1 
+				 * */
+				pmap[kk].uymul = 1.0;
+			} else {
+				/* use previously set values */
+				pmap[kk].depmax = depmax;
+				pmap[kk].depmin = depmin;
+				pmap[kk].uymul = 1.0;
+			}
+		}
+
+		if(*uy < pmap[kk].yh)
+			*uy = pmap[kk].yh ;
+		if(*ly > pmap[kk].yl)
+			*ly = pmap[kk].yl ;
+		if(pabsolute == YES) {
+			u = (float)(sacdata[k].tzref + tb  
+				- gsac_control.begminx)/twin;
+			xx = x0 + xlen*(uxmul*(u-uxcen) +0.5 );
+		} else {
+			u = -(float)(sacdata[k].tzbegx - sacdata[k].tzbeg)/twin;
+			xx = x0 + xlen*(uxmul*(u-uxcen) +0.5 );
+		}
+		/* define range of data that fills within the clip space
+			This is done to reduce the number of non-plotable
+			move calls, which significantly reduces the
+			size of the PLOT file and also speeds up the
+			on-line plot */
+		ilow = MAX(0 ,(x0-xx)/(uxmul*dx) -1 );
+		ihgh = MIN(npts , (x0+xlen-xx)/(uxmul*dx) +1 );
+		/* to implement the autoscaling within the YLIM_OFF
+		 * regime I must look at the points within the current
+		 * plot window and then readjust the scaling
+		 * */
+		if(ylimctrl == YLIM_OFF ){
+			txx = xx + (ilow)*uxmul*dx ;
+			tdepmax = -1.0e+37;
+			tdepmin =  1.0e+37;
+			for(i=ilow ; i < ihgh ; i+= inc ){
+				if(txx >= x0 && txx <= x0+xlen){
+				tdepmin = MIN(sacdata[k].sac_data[i],tdepmin);
+ 				tdepmax = MAX(sacdata[k].sac_data[i],tdepmax);
+				}
+				txx += uxmul*dx*inc;
+			}
+			if (tdepmax == tdepmin) {
+				if(tdepmax == 0){
+					tdepmax = 1.0;
+				} else {
+					tdepmin = -ABS(tdepmax);
+					tdepmax =  ABS(tdepmax);
+				}
+			}
+			depmax = tdepmax + 0.05*fabs(tdepmax);
+			depmin = tdepmin - 0.05*fabs(tdepmin);
+		}
+		if(gsac_control.ylim_rsc == YES){
+			depmax /= pmap[kk].uymul;
+			depmin /= pmap[kk].uymul;
+		}
+		/* up to here xx is the absolute position of first point
+		 * with clipping we only plot in the range [ 0 , xlen ]
+		 * so with inverse we can map the window back to the sample
+		 * or absolute time */
+		/* never divide by 0 */
+		if(gsac_control.xgrid == YES)
+		dolnxgrid(x0,yy0,yy0+dy,xlen,twinll,twinhh,0.10, 
+			YES, gsac_control.xgrid_color, gsac_control.xgrid_type,gsac_control.xgrid_minor);
+		dolinx(x0,yy0+dy,xlen,twinll,twinhh,0.10, NO, NO, NO, 1, " ");
+		if(kkk == ne -1){
+			dolinx(x0,yy0   ,xlen,twinll,twinhh,0.10, 
+				YES, NO, YES, strlen(title[isxtime]), title[isxtime]);
+			if(isxtime == YES)
+				gleft(x0,yy0-0.30,0.07,timstr,0.0);
+		}
+		
+		if(gsac_control.plotliny){
+		if(gsac_control.ygrid == YES)
+			dolnygrid(x0,x0+xlen,yy0,dy,depmax,depmin,0.10, 
+				YES, gsac_control.ygrid_color, 
+				gsac_control.ygrid_type,gsac_control.ygrid_minor);
+			doliny(x0+xlen,yy0,dy,depmax,depmin,0.10, YES, NO, NO, 1, " ");
+			doliny(x0,yy0,dy,depmax,depmin,0.10, NO, YES, YES, 1, " ");
+		} else {
+			if(depmin > 0)
+				floor = depmin;
+			else
+				floor = 1.0e-10;
+			if(depmax > 0)
+				ceiling = depmax;
+			else
+				ceiling = 1.0e-9;
+			if(gsac_control.ygrid == YES){
+				dologygrid(x0,x0+xlen,yy0,dy,ceiling,floor,
+					0.10,gsac_control.ygrid_color, 
+					gsac_control.ygrid_type,
+					gsac_control.ygrid_minor);
+			}
+			dology(x0+xlen,yy0,dy,ceiling,floor,0.10, YES, NO, NO, 1, " ");
+			dology(x0,yy0,dy,ceiling,floor,0.10, NO, YES, YES, 1, " ");
+		}
+
+
+		/* end annotate plot titles */
+		gbox(x0, yy0, x0+xlen, yy0+dy);
+		gclip("on", x0, yy0, x0+xlen, yy0+dy);
+		gsac_setcolor(YES, kkk, ntrc);
+		gsac_plot_fileid(x0,yyy0,xlen,dy, k);
+		txx = xx + (ilow)*uxmul*dx ;
+		for(i=ilow ; i < ihgh ; i+= inc ){
+			if(gsac_control.plotliny){
+			yy = yy0 +dy*(sacdata[k].sac_data[i] - depmin)
+				/(depmax - depmin);
+			} else {
+				/* never take a log of a negative or zero
+				 * put in the floor of the depmin from the
+				 * ylim */
+				if(sacdata[k].sac_data[i] > 0)
+					yy = yy0 +dy*log(sacdata[k].sac_data[i] 
+					/ floor) /log(ceiling / floor);
+				else
+					yy = yy0;
+			}
+			if(i == ilow )
+				plot((float)txx,yy,3);
+			else
+				plot((float)txx,yy,2);
+			txx += uxmul*dx*inc;
+		}
+		/* if decimate, so indicate in trace box */
+		if(inc > 1)
+			showdec(x0, yy0, x0+xlen, yy0+dy, inc);
+		/* show pick */
+
+		gclip("off", x0, y0, x0+xlen, y0+ylen);
+		gsac_setcolor(NO , kkk, ntrc);
+		if(gsac_control.plotdevice==WIN)
+			XviG_Flush();
+	}
+		/* annotate with the plot titles
+			added 02 OCT 2008 */
+/*
+fprintf(stderr,"ON %d LOC %d TEXXT %s\n",title_on,title_location,title_text);
+fprintf(stderr,"X0 %f XLEN %f Y0 %f YLEN %f\n",x0,xlen,y0,ylen);
+*/
+		if(title_on == YES){
+			switch(title_size){
+				case TITLE_SIZE_TINY   :
+					tit_siz = 0.05 ;
+					break;
+				case TITLE_SIZE_SMALL  :
+					tit_siz = 0.1 ;
+					break;
+				case TITLE_SIZE_MEDIUM :
+					tit_siz = 0.15 ;
+					break;
+				case TITLE_SIZE_LARGE  :
+					tit_siz = 0.2 ;
+					break;
+			}
+			if(title_location == TITLE_LOC_TOP){
+				gcent(x0+0.5*xlen,y0+ylen+0.2,tit_siz,title_text,0.0);
+			} else if(title_location == TITLE_LOC_BOTTOM){
+				gcent(x0+0.5*xlen,y0-0.7,tit_siz,title_text,0.0);
+			} else if(title_location == TITLE_LOC_LEFT){
+				gcent(x0-0.8,y0+0.5*ylen,tit_siz,title_text, 90.0);
+			} else if(title_location == TITLE_LOC_RIGHT){
+				gcent(x0+xlen+0.2,y0+0.5*ylen,tit_siz,title_text,-90.0);
+			}
+
+		}
+	gmesg(" ");
+
+}
+
+
+void gsac_psppk(float x0,float y0,float xlen,float ylen,float fe,float fs,int ns,int ne,int ntrc, float depmax, float depmin, int numpspframe, float dy, int psppk_doamph, int psppk_overlay, int psppk_xlin, int psppk_ylin, float psppk_amin, float psppk_amax, float *uy, float *ly)
+{
+int kk, kkk, n2;
+int i, j, k, is;
+float tr, ti;
+float depmen;
+	int indmax, indmin;
+float df;
+float yy0, yyy0;
+float xx, yy;
+float ht;
+float freq;
+float uxcen, uxmul, fwin;
+float fwinl, fwinh;
+float fwinll, fwinhh;
+fprintf(stderr,
+"x0 %f,y0 %f,xlen %f,ylen %f,fe %f,fs %f,ns %d,ne %d,ntrc %d,depmax %f,depmin %f,numpspframe %d,dy %f,psppk_doamph %d,psppk_overlay %d,psppk_xlin %d,psppk_ylin %d,psppk_amin %f,psppk_amax %f,*uy %f,*ly %f\n",
+x0,y0,xlen,ylen,fe,fs,ns,ne,ntrc,depmax,depmin,numpspframe,dy,psppk_doamph,psppk_overlay,psppk_xlin,psppk_ylin,psppk_amin,psppk_amax,*uy,*ly);
+	/* do the bottom axis */
+
+	ht = 0.10;
+	yy0 = 1.0;
+	gclip("off", x0, yy0, x0+xlen, yy0+dy);
+	uxcen = gsac_control.uxcen;
+	uxmul = gsac_control.uxmul;
+	*ly =  1.0e+38;
+	*uy = -1.0e+38;
+	/* ssafety */
+	if(fwin <= 0.0)fwin = 1.0;
+	fwinl = fwin*(uxcen - 0.5/uxmul);
+	fwinh = fwin*(uxcen + 0.5/uxmul);
+	/* set the background */
+	if(gsac_control.background == YES &&
+		gsac_control.background_color >= 0){
+		newpen(gsac_control.background_color);
+		if(psppk_overlay == YES){
+			shader(x0,y0,x0+xlen,y0+ylen,0,0,0.01,0.01);
+		} else {
+			shader(x0,y0+ylen-(ne-ns)*dy,x0+xlen,y0+ylen,0,0,0.01,0.01);
+		}
+		newpen(1);
+	} else {
+		newpen(1);
+	}
+	for(kkk=ns;kkk < ne;kkk++){
+		k = sortptr[kkk];
+		kk = kkk%numpspframe;
+
+		n2 = sacdata[k].npow2/2  ;
+		y = (float *)realloc(y,(n2+1)*sizeof(float));
+		/* now fill array with amplitude or phase spectra */
+		for(i=0 , j= 0; i <= n2 ; i++){
+			tr = sacdata[k].sac_spectra[j++];
+			ti = sacdata[k].sac_spectra[j++];
+			if(psppk_doamph == PLOT_AM){
+				y[i] = sqrt(tr*tr + ti*ti);
+			} else if (psppk_doamph == PLOT_PH){
+				y[i] = atan2(ti,tr);
+			}
+		}
+		if(psppk_doamph == PLOT_AM && psppk_overlay == NO){
+			getmxmn(y, n2+1,&depmax, &depmin, &depmen,&indmax,&indmin);
+			/* adjust amplitude for AMIN AMAX */
+			if(psppk_ylin == YES){
+				depmax = MIN(depmax * 1.1, psppk_amax);
+				depmin = psppk_amin ;
+			} else {
+				if(psppk_amax < 1.0e+37)
+					depmax = psppk_amax;
+				else
+					depmax *= 1.5;
+				if(psppk_amin > 0.0)
+					depmin = psppk_amin;
+				else
+					depmin = depmax/10000.0 ;
+			}
+		} else if (psppk_doamph == PLOT_PH){
+			depmax =  3.1415927;
+			depmin = -3.1415927;
+			depmen = 0.0;
+		}
+
+
+
+		df  = sacdata[k].df;
+
+		/* use depmax depmin */
+		if(psppk_overlay == YES){
+			yy0 = y0;
+			yyy0 = yy0 -kk*1.5*ht ;
+		} else {
+			yy0 = y0 + (numpspframe -1  - kk )*dy;
+			yyy0 = yy0;
+		}
+		if(psppk_xlin == YES){
+			if(gsac_control.xgrid == YES)
+				dolnxgrid(x0,yy0,yy0+dy,xlen,fe,fs,0.10, YES, 
+					gsac_control.xgrid_color, 
+					gsac_control.xgrid_type,
+					gsac_control.xgrid_minor);
+			dolinx(x0,yy0+dy,xlen,fe,fs,0.10, NO, NO, NO, 0, " ");
+		} else {
+			if(gsac_control.xgrid == YES){
+				dologxgrid(x0,yy0,yy0+dy,xlen,fe,fs,0.10,
+					gsac_control.xgrid_color,
+					gsac_control.xgrid_type,
+					gsac_control.xgrid_minor);
+			}
+			dologx(x0,yy0+dy,xlen,fe,fs,0.10, NO, NO, NO, 0, " ");
+		}
+		if(kkk == ne -1 ){
+			if(psppk_xlin == YES) {
+				dolinx(x0,yy0,xlen,fe,fs,0.10, YES, NO, YES, 14, "Frequency (Hz)");
+			} else {
+				dologx(x0,yy0,xlen,fe,fs,0.10,YES,NO,YES,14,"Frequency (Hz)");
+			}
+		}
+		if(psppk_doamph == PLOT_AM){
+			if(psppk_ylin == YES){
+				if(gsac_control.ygrid == YES)
+					dolnygrid(x0,x0+xlen,yy0,dy,depmax,
+						depmin, 0.10, YES, 
+						gsac_control.ygrid_color, 
+						gsac_control.ygrid_type,
+						gsac_control.ygrid_minor);
+				doliny(x0,yy0,dy,depmax,depmin,0.10, NO, YES, YES, 1, " ");
+				doliny(x0+xlen,yy0,dy,depmax,depmin,0.10, YES, NO, NO, 0, " ");
+			} else {
+				if(gsac_control.ygrid == YES){
+					dologygrid(x0,x0+xlen,yy0,dy,depmax,
+						depmin,0.10,
+						gsac_control.ygrid_color,
+						gsac_control.ygrid_type,
+						gsac_control.ygrid_minor);
+				}
+				dology(x0,yy0,dy,depmax,depmin,0.10,NO,YES,YES,1," ");
+				dology(x0+xlen,yy0,dy,depmax,depmin,0.10,YES,NO,NO,0," ");
+			}
+		} else {
+			if(gsac_control.ygrid == YES){
+				dolnygrid(x0,x0+xlen,yy0,dy,depmax,depmin,0.10, 
+					YES, gsac_control.ygrid_color, 
+					gsac_control.ygrid_type,
+					gsac_control.ygrid_minor);
+			}
+			doliny(x0,yy0,dy,depmax,depmin,0.10, NO, YES, YES, 1, " ");
+			doliny(x0+xlen,yy0,dy,depmax,depmin,0.10, YES, NO, NO, 0, " ");
+		}
+		gbox(x0, yy0, x0+xlen, yy0+dy);
+		gclip("on", x0, yy0, x0+xlen, yy0+dy);
+		gsac_setcolor(YES, kkk, ntrc);
+		gsac_plot_fileid(x0,yyy0,xlen,dy, k);
+		/* plot the spectra */
+		pmap[kk].ifirst = -1;
+		pmap[kk].ilast  = -1;
+		for(i=0, is=0 ; i <= n2 ; i++){
+			freq = i * df;
+			if(freq >= fs && freq <= fe){
+				if(pmap[kk].ifirst < 0 )
+					pmap[kk].ifirst = i;
+				pmap[kk].ilast  = i;
+				if(psppk_doamph == PLOT_AM){
+					if(psppk_ylin == YES){
+				yy = yy0 +dy*(y[i] - depmin)/(depmax - depmin);
+					} else {
+				yy = yy0 + dy*log10(y[i] / depmin)/log10(depmax / depmin);
+					}
+				} else {
+				yy = yy0 +dy*(y[i] - depmin)/(depmax - depmin);
+				}
+				if(psppk_xlin == YES){
+				xx = x0 + xlen*(freq-fs)/(fe-fs);
+				} else {
+				xx = x0 + xlen*log10(freq/fs)/log10(fe/fs);
+				}
+	
+		
+				if(is == 0 ){
+					plot(xx,yy,3);
+					is = 1;
+				} else {
+					plot(xx,yy,2);
+				}
+			}
+		}
+		gsac_setcolor(NO, kkk, ntrc);
+		gclip("off", x0, yy0, x0+xlen, yy0+dy);
+		/* set up the plot bounds to define subwindows */
+		pmap[kk].abstime = YES;
+		pmap[kk].xl = x0;
+		pmap[kk].xh = x0 +xlen;;
+		pmap[kk].yl = yy0;
+		pmap[kk].yh = yy0 +dy;
+		pmap[kk].k  = k;
+		pmap[kk].n  = kk;
+		pmap[kk].tfirst = fs;
+		pmap[kk].tlast  = fe;
+		pmap[kk].npts  = n2-1;
+		pmap[kk].xlen = xlen;
+		pmap[kk].delta = df;
+		/* not used but also float = double */
+		pmap[kk].ymult = 1.0;
+                if(*uy < pmap[kk].yh)
+                        *uy = pmap[kk].yh ;
+                if(*ly > pmap[kk].yl)
+                        *ly = pmap[kk].yl ;
+		XviG_Flush();
+	}
+		/* annotate with the plot titles
+			added 29 MAY 2009 */
+/*
+fprintf(stderr,"ON %d LOC %d TEXXT %s\n",title_on,title_location,title_text);
+fprintf(stderr,"X0 %f XLEN %f Y0 %f YLEN %f\n",x0,xlen,y0,ylen);
+*/
+		if(title_on == YES){
+			switch(title_size){
+				case TITLE_SIZE_TINY   :
+					tit_siz = 0.05 ;
+					break;
+				case TITLE_SIZE_SMALL  :
+					tit_siz = 0.1 ;
+					break;
+				case TITLE_SIZE_MEDIUM :
+					tit_siz = 0.15 ;
+					break;
+				case TITLE_SIZE_LARGE  :
+					tit_siz = 0.2 ;
+					break;
+			}
+			if(title_location == TITLE_LOC_TOP){
+				gcent(x0+0.5*xlen,y0+ylen+0.2,tit_siz,title_text,0.0);
+			} else if(title_location == TITLE_LOC_BOTTOM){
+				gcent(x0+0.5*xlen,y0-0.7,tit_siz,title_text,0.0);
+			} else if(title_location == TITLE_LOC_LEFT){
+				gcent(x0-0.8,y0+0.5*ylen,tit_siz,title_text, 90.0);
+			} else if(title_location == TITLE_LOC_RIGHT){
+				gcent(x0+xlen+0.2,y0+0.5*ylen,tit_siz,title_text,-90.0);
+			}
+
+		}
+	gmesg(" ");
+}
+
+void getfreq(float uv, int kk, int ns, int ne, int numpsppkframe, int *lpos, float x0){
+/* uv - fraction of window where frequency is picked varies [0,1]
+   kk - reference to the frame on the page kk = [0,numpsppkframe-1] except for
+	possibly the last page
+   ns - begin  of traces on this page
+   ne - end index
+   numpsppkframe = number of spectra per page
+   lpos - controls output of amplitude information at top of page
+   x0  - position of lwoer left corner
+*/
+	/* k is the fraction of the window displayed [0,1] 
+
+	   kk is the reference to the particular frame shown
+
+	   k is the original trace read, before sorted
+	*/
+	   
+	float dfw, fs, fe, df, amp;
+	float freq ;
+	float tr, ti;
+	int k, npow2,j,kkks,kkke,kkk;
+	int ls;
+
+	/* first set the limtis for output */
+	/* given the frequency, make into array index */
+	if(psppk_overlay == YES ){
+		kkks = ns ;
+		kkke = ne ;
+	} else {
+		kkks = kk;
+		kkke = kk+1;
+	}
+	for(kkk=kkks; kkk < kkke ; kkk++){
+		k = pmap[kkk].k ;
+		df = sacdata[k].df ;
+		fs = pmap[kk].tfirst ;
+		fe = pmap[kk].tlast  ;
+        	dfw = fe - fs;
+		if( psppk_xlin == YES )
+			freq = fs + uv*dfw ;
+		else
+			freq = fs * pow( (fe/fs), uv);
+		npow2 = sacdata[k].npow2 ;
+		/* freq = j *df where j = [0,npow2] */
+		j = (int)(0.5 + freq / df );	
+		if( j < 0 )
+			j = 0;
+		if(j <= npow2/2) {
+			tr = sacdata[k].sac_spectra[2*j   ];
+			ti = sacdata[k].sac_spectra[2*j +1];
+			amp = sqrt(tr*tr + ti*ti);
+			/* beware ostr is of length 80 or 79 + 1 there is no limit on the file name */
+			ls = strlen(sacdata[k].sac_ifile_name);
+			sprintf(ostr1,"%f %11.4e %s",freq,amp,basename(sacdata[k].sac_ifile_name));
+			fprintf(stderr,"uv %f kk %d fs %f fe %f freq %f k %d j %d amp %g %s\n",uv,kk,fs,fe,freq,k,j,amp,sacdata[k].sac_ifile_name);
+			  		gleft(x0,7.8-(*lpos)*0.15,0.10,ostr1,0.0);
+			*lpos = *lpos + 1;
+		}
+	}
+}
+
